@@ -8,7 +8,7 @@ const frontendFolder = nodePath.resolve(currentFolderPath, "../frontend");
 
 const { port } = await startServer({
   frontendFolder,
-  port: Number(process.env.PORT ?? 8080)
+  port: Number(process.env.PORT ?? 9010)
 });
 
 console.log(`listening on http://localhost:${port}`);
