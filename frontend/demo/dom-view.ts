@@ -59,16 +59,19 @@ const style = `
   gap: 8px;
 }
 
+/* a flex item is at least as wide as its content, the min-width lets the field shrink on narrow screens */
 .demo label {
   display: flex;
   flex: 1;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   font-weight: 600;
 }
 
 .demo input {
   flex: 1;
+  min-width: 0;
   padding: 8px 10px;
   border: 1px solid #c8c8c2;
   border-radius: 6px;
