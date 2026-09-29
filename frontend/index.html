@@ -227,8 +227,10 @@
         detection of a lost connection within seconds, with heartbeats.
       </p>
       <p>
-        The protocol is symmetric. The browser and the server follow the same rules, so this section calls both of
-        them endpoints.
+        The two ends of a connection are its endpoints: the client, which opens the WebSocket, usually the browser, and
+        the server, which accepts it. Both follow the same rules, except when the connection opens: the client says
+        <code>hello</code> first, and the server only answers a valid <code>hello</code>
+        (<a href="#core-opening">1.2</a>).
       </p>
       <p class="conventions">
         The key words MUST, MUST NOT, SHOULD and MAY are to be interpreted as described in
@@ -288,10 +290,25 @@
 
       <h3 id="core-opening">1.2 Opening a connection</h3>
       <p>
-        As soon as the WebSocket is open, each endpoint sends its <code>hello</code> and then its first
-        <code>grant</code>, without waiting for the other endpoint. The <code>hello</code> tells the other endpoint that
-        it is talking to an endpoint of this protocol, and in which version.
+        The <code>hello</code> tells the other endpoint that it is talking to an endpoint of this protocol, and in which
+        version. The client says it first, and the server stays silent until it has heard it, so a program that opens
+        WebSockets to the server at random, e.g. a bot, gets nothing out of it.
       </p>
+      <ol>
+        <li>
+          As soon as the WebSocket is open, the client sends its <code>hello</code> and then its first
+          <code>grant</code>, without waiting for the server.
+        </li>
+        <li>
+          The server waits for the <code>hello</code> of the client. Until it has received a valid one, of ksock in a
+          version the server implements, the server MUST NOT send any notification, neither <code>hello</code> nor
+          <code>grant</code> nor <code>heartbeat</code>. All it may do is close the connection.
+        </li>
+        <li>
+          Once the <code>hello</code> of the client is valid, the server sends its <code>hello</code> and then its first
+          <code>grant</code>.
+        </li>
+      </ol>
       <table>
         <thead>
           <tr>
@@ -331,7 +348,10 @@
           The first notification an endpoint receives MUST be a <code>hello</code> with the protocol
           <code>"ksock"</code>. Anything else is a protocol violation.
         </li>
-        <li>An endpoint that does not implement the version of the other endpoint MUST close the connection.</li>
+        <li>
+          An endpoint that does not implement the version of the other endpoint MUST close the connection. A server
+          closes it without sending its own <code>hello</code>.
+        </li>
         <li>An endpoint sends its <code>hello</code> once. A second one is a protocol violation.</li>
       </ul>
 
@@ -448,12 +468,13 @@
         <li>
           An endpoint that receives no notification within its own <code>heartbeatTimeout</code> MUST close the
           connection. The time runs from the opening of the WebSocket, so the <code>hello</code> of the other endpoint
-          has to arrive within it too.
+          has to arrive within it too. A server thereby also closes the connections that never say <code>hello</code>.
         </li>
         <li>
-          Until the <code>hello</code> of the other endpoint arrives, an endpoint does not know its
-          <code>heartbeatTimeout</code>. Its own <code>hello</code> and first <code>grant</code>, sent right at the
-          start, are its first signs of life.
+          The client does not know the <code>heartbeatTimeout</code> of the server until the <code>hello</code> of the
+          server arrives. Its own <code>hello</code> and first <code>grant</code>, sent right at the start, are its first
+          signs of life. The server knows the <code>heartbeatTimeout</code> of the client before it sends anything, from
+          the <code>hello</code> of the client.
         </li>
       </ul>
       <p>A <code>heartbeat</code> has no parameters:</p>
@@ -608,7 +629,7 @@
         it the handlers of what it receives and the methods for what it sends. TypeScript checks the parameters of both,
         and the parsers check what actually arrives.
       </p>
-      <p>For the core, the two sides are the same, as ksock is symmetric:</p>
+      <p>For the core, both sides handle the same notifications:</p>
 <pre><code>import { Binary } from "bson";
 import {
   createCombined,
@@ -672,8 +693,7 @@ const noParamsParser: TObjectParser&lt;void&gt; = {
   }
 };
 
-// ksock is symmetric: both endpoints handle the same notifications,
-// and neither has requests
+// the client and the server handle the same notifications, and no requests
 const ksockEndpoint = {
   requests: createRpcRequestsDefinition({}),
   notifications: createRpcNotificationsDefinition({
@@ -693,7 +713,7 @@ const ksockProtocol = createCombined({
         member <code>bson</code> leaves out, so a <code>heartbeat</code> goes out without <code>params</code> as the core
         requires (<a href="#core-heartbeats">1.4</a>).
       </p>
-      <p>An endpoint, e.g. the server on side A and the browser on side B, then handles and sends typed notifications:</p>
+      <p>An endpoint, e.g. the server on side A and the client on side B, then handles and sends typed notifications:</p>
 <pre><code>const server = ksockProtocol.sideA({
   incomingNotifications: {
     notifications: {
