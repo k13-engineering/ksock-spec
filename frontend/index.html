@@ -68,8 +68,14 @@
 
     nav ol {
       margin: 0;
-      padding: 0 0 16px 20px;
+      padding: 0 0 16px;
+      list-style: none;
       border-bottom: 1px solid var(--line);
+    }
+
+    nav ol ol {
+      padding: 0 0 0 24px;
+      border-bottom: none;
     }
 
     a {
@@ -89,8 +95,70 @@
       font-size: 24px;
     }
 
-    .scope {
+    section h3 {
+      margin: 36px 0 12px;
+      font-size: 20px;
+    }
+
+    section h4 {
+      margin: 24px 0 8px;
+      font-size: 16px;
+    }
+
+    section p,
+    section ul,
+    section ol {
       margin: 0 0 12px;
+    }
+
+    section li {
+      margin-bottom: 6px;
+    }
+
+    code {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.9em;
+    }
+
+    pre {
+      margin: 0 0 16px;
+      padding: 12px 16px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    pre code {
+      font-size: inherit;
+    }
+
+    table {
+      width: 100%;
+      margin: 0 0 16px;
+      border-collapse: collapse;
+      font-size: 15px;
+    }
+
+    th,
+    td {
+      padding: 6px 16px 6px 0;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .note {
+      padding: 12px 16px;
+      border-left: 3px solid var(--accent);
+      background: #ffffff;
+    }
+
+    .conventions {
+      color: var(--muted);
+      font-size: 15px;
     }
 
     .stub {
@@ -116,18 +184,349 @@
   <nav aria-label="Contents">
     <h2>Contents</h2>
     <ol>
-      <li><a href="#core">Core: how it works</a></li>
-      <li><a href="#libraries">Recommended libraries</a></li>
-      <li><a href="#approaches">Recommended application-level approaches</a></li>
-      <li><a href="#live-demo">Live demo</a></li>
+      <li>
+        1. <a href="#core">Core: how it works</a>
+        <ol>
+          <li>1.1 <a href="#core-wire">Messages on the wire</a></li>
+          <li>1.2 <a href="#core-opening">Opening a connection</a></li>
+          <li>1.3 <a href="#core-grants">Flow control with grants</a></li>
+          <li>1.4 <a href="#core-heartbeats">Heartbeats</a></li>
+          <li>1.5 <a href="#core-message">Messages of the application</a></li>
+          <li>1.6 <a href="#core-closing">Closing the connection</a></li>
+        </ol>
+      </li>
+      <li>2. <a href="#libraries">Recommended libraries</a></li>
+      <li>3. <a href="#approaches">Recommended application-level approaches</a></li>
+      <li>4. <a href="#live-demo">Live demo</a></li>
     </ol>
   </nav>
 
   <main>
     <section id="core">
       <h2>1. Core: how it works</h2>
-      <p class="scope">How the communication between the browser and the server really works.</p>
-      <p class="stub">To be written</p>
+      <p>
+        The core is the protocol a browser and a server speak over a WebSocket, called ksock. Its notifications are
+        carried in three layers, each inside the one below it:
+      </p>
+      <ol>
+        <li>The WebSocket carries binary messages only.</li>
+        <li>Each WebSocket message is one BSON document.</li>
+        <li>
+          Each BSON document is a JSON-RPC 2.0 notification: <code>hello</code>, <code>grant</code>,
+          <code>heartbeat</code> or <code>message</code>.
+        </li>
+      </ol>
+      <p>
+        On these layers, ksock adds what the WebSocket API of browsers lacks: flow control, with grants, and the
+        detection of a lost connection within seconds, with heartbeats.
+      </p>
+      <p>
+        The protocol is symmetric. The browser and the server follow the same rules, so this section calls both of
+        them endpoints.
+      </p>
+      <p class="conventions">
+        The key words MUST, MUST NOT, SHOULD and MAY are to be interpreted as described in
+        <a href="https://www.rfc-editor.org/rfc/rfc2119">RFC 2119</a>.
+      </p>
+
+      <h3 id="core-wire">1.1 Messages on the wire</h3>
+      <p>
+        An endpoint MUST send binary WebSocket messages only. Each WebSocket message MUST contain exactly one
+        <a href="https://bsonspec.org/">BSON</a> document, with nothing before or after it.
+      </p>
+      <p>
+        Each document MUST be a <a href="https://www.jsonrpc.org/specification">JSON-RPC 2.0</a> notification: it has
+        the member <code>jsonrpc</code> with the value <code>"2.0"</code>, the member <code>method</code> with the name
+        of the notification and, if the notification has parameters, the member <code>params</code> with them by name.
+        It has no <code>id</code>, as nothing is answered on this layer.
+      </p>
+      <p>
+        Counts, sizes and times are integers. BSON libraries encode numbers differently, small ones as int32 and large
+        ones as int64 or double, so an endpoint MUST accept any BSON number type that holds an integer.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Notification</th>
+            <th>Parameters</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>hello</code></td>
+            <td><code>protocol</code>, <code>version</code>, <code>heartbeatTimeout</code></td>
+            <td>names the protocol and its version, sent first (<a href="#core-opening">1.2</a>)</td>
+          </tr>
+          <tr>
+            <td><code>grant</code></td>
+            <td><code>messages</code>, <code>bytes</code></td>
+            <td>allows the other endpoint to send (<a href="#core-grants">1.3</a>)</td>
+          </tr>
+          <tr>
+            <td><code>heartbeat</code></td>
+            <td>none</td>
+            <td>shows that the connection is alive while nothing else is sent (<a href="#core-heartbeats">1.4</a>)</td>
+          </tr>
+          <tr>
+            <td><code>message</code></td>
+            <td><code>data</code></td>
+            <td>carries a message of the application (<a href="#core-message">1.5</a>)</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        The examples in this section show BSON documents in JSON notation, with binary data as
+        <code>&lt;binary …&gt;</code>.
+      </p>
+
+      <h3 id="core-opening">1.2 Opening a connection</h3>
+      <p>
+        As soon as the WebSocket is open, each endpoint sends its <code>hello</code> and then its first
+        <code>grant</code>, without waiting for the other endpoint. The <code>hello</code> tells the other endpoint that
+        it is talking to an endpoint of this protocol, and in which version.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Parameter</th>
+            <th>Type</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>protocol</code></td>
+            <td>string</td>
+            <td><code>"ksock"</code></td>
+          </tr>
+          <tr>
+            <td><code>version</code></td>
+            <td>integer</td>
+            <td>the version of the protocol, <code>1</code> for this specification</td>
+          </tr>
+          <tr>
+            <td><code>heartbeatTimeout</code></td>
+            <td>integer</td>
+            <td>
+              the longest time in milliseconds the endpoint waits for a notification of the other endpoint, greater than
+              0 (<a href="#core-heartbeats">1.4</a>)
+            </td>
+          </tr>
+        </tbody>
+      </table>
+<pre><code>{
+  "jsonrpc": "2.0",
+  "method": "hello",
+  "params": { "protocol": "ksock", "version": 1, "heartbeatTimeout": 10000 }
+}</code></pre>
+      <ul>
+        <li>
+          The first notification an endpoint receives MUST be a <code>hello</code> with the protocol
+          <code>"ksock"</code>. Anything else is a protocol violation.
+        </li>
+        <li>An endpoint that does not implement the version of the other endpoint MUST close the connection.</li>
+        <li>An endpoint sends its <code>hello</code> once. A second one is a protocol violation.</li>
+      </ul>
+
+      <h3 id="core-grants">1.3 Flow control with grants</h3>
+      <p>
+        A browser cannot apply backpressure to a WebSocket. The WebSocket API hands every message to the page as soon
+        as it arrives, with no way to pause receiving, and <code>send()</code> buffers whatever it is given. An endpoint
+        that sends faster than the other one processes fills the memory of the other one. ksock therefore controls the
+        flow on its own layer: an endpoint only sends the <code>message</code> notifications that the other endpoint
+        allowed with a <code>grant</code>.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Parameter</th>
+            <th>Type</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>messages</code></td>
+            <td>integer</td>
+            <td>how many <code>message</code> notifications the other endpoint may send</td>
+          </tr>
+          <tr>
+            <td><code>bytes</code></td>
+            <td>integer</td>
+            <td>how many bytes these may take together</td>
+          </tr>
+        </tbody>
+      </table>
+<pre><code>{
+  "jsonrpc": "2.0",
+  "method": "grant",
+  "params": { "messages": 16, "bytes": 65536 }
+}</code></pre>
+
+      <h4>Sending under a grant</h4>
+      <ul>
+        <li>
+          An endpoint keeps a credit of messages and bytes. It starts at 0 messages and 0 bytes, so no endpoint sends a
+          <code>message</code> notification before it received a <code>grant</code>.
+        </li>
+        <li>
+          A received <code>grant</code> sets the credit to its messages and bytes. It does not add to what is left of
+          the credit: the last <code>grant</code> received counts, from then on until the next one.
+        </li>
+        <li>
+          Every <code>message</code> notification sent takes 1 message and its size in bytes from the credit. Its size
+          is the length of its BSON document, which is the length of the WebSocket message, including the bytes of the
+          notification around the data.
+        </li>
+        <li>
+          An endpoint MUST NOT send a <code>message</code> notification that its credit does not cover, in messages and
+          in bytes. It waits for the next <code>grant</code> instead. <code>message</code> notifications go out in the
+          order the application sends them, so one that waits holds back the ones after it.
+        </li>
+        <li>
+          Only <code>message</code> notifications take from the credit. <code>hello</code>, <code>grant</code> and
+          <code>heartbeat</code> are sent whatever the credit is, so an endpoint without credit still grants and sends
+          heartbeats.
+        </li>
+      </ul>
+
+      <h4>Granting</h4>
+      <ul>
+        <li>Each endpoint sends its first <code>grant</code> right after its <code>hello</code>.</li>
+        <li>
+          After that, an endpoint MUST NOT send its next <code>grant</code> before the <code>message</code> notifications
+          it received since its last one used up half of that grant's messages or half of its bytes, whichever comes
+          first. This keeps grants, which no grant limits, from flooding the connection. It has to be whichever comes
+          first: a grant of many bytes for few messages would otherwise never be followed by another once its messages
+          are used up.
+        </li>
+        <li>
+          An endpoint grants when it is ready for more, e.g. once its application has processed the messages it
+          received. This is what makes grants backpressure: the other endpoint only sends as much as it was granted.
+        </li>
+        <li>
+          An endpoint SHOULD grant at least as many bytes as the largest message it accepts, as a message larger than
+          the credit can never be sent.
+        </li>
+      </ul>
+      <p class="note">
+        A <code>grant</code> replaces the credit instead of adding to it. So the <code>message</code> notifications the
+        other endpoint sent before the <code>grant</code> reached it were sent under the <code>grant</code> before, and
+        an endpoint can receive more after sending a <code>grant</code> than that <code>grant</code> allows.
+      </p>
+
+      <h3 id="core-heartbeats">1.4 Heartbeats</h3>
+      <p>
+        TCP notices a lost connection late: while nothing is sent, not at all, and while data is sent, only once its
+        retransmissions have given up, which takes minutes. WebSocket has ping and pong frames for this, but browsers
+        neither let a page send a ping nor tell it about a pong. ksock therefore detects a lost connection with its own
+        notifications, within a time each endpoint chooses.
+      </p>
+      <ul>
+        <li>
+          Each endpoint announces in its <code>hello</code> its <code>heartbeatTimeout</code>: the longest time it waits
+          for a notification of the other endpoint. The two endpoints can announce different times, but both announce
+          one, so there are heartbeats in both directions.
+        </li>
+        <li>
+          Every notification is a sign of life: a <code>hello</code>, <code>grant</code> or <code>message</code> that an
+          endpoint sends or receives counts as a heartbeat.
+        </li>
+        <li>
+          An endpoint sends a <code>heartbeat</code> only when it has sent nothing else for a while. It MUST send one
+          before the <code>heartbeatTimeout</code> of the other endpoint passes without a notification from it, and it
+          SHOULD send one once it has sent nothing for half of that time, which leaves the other half for the
+          <code>heartbeat</code> to arrive, for timeouts in the range of seconds.
+        </li>
+        <li>
+          An endpoint that receives no notification within its own <code>heartbeatTimeout</code> MUST close the
+          connection. The time runs from the opening of the WebSocket, so the <code>hello</code> of the other endpoint
+          has to arrive within it too.
+        </li>
+        <li>
+          Until the <code>hello</code> of the other endpoint arrives, an endpoint does not know its
+          <code>heartbeatTimeout</code>. Its own <code>hello</code> and first <code>grant</code>, sent right at the
+          start, are its first signs of life.
+        </li>
+      </ul>
+      <p>A <code>heartbeat</code> has no parameters:</p>
+<pre><code>{
+  "jsonrpc": "2.0",
+  "method": "heartbeat"
+}</code></pre>
+
+      <h3 id="core-message">1.5 Messages of the application</h3>
+      <p>
+        A <code>message</code> notification carries one message of the application, as it is, in binary data. This layer
+        does not look into it. <a href="#approaches">Section 3</a> recommends what applications put in it.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Parameter</th>
+            <th>Type</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>data</code></td>
+            <td>binary</td>
+            <td>the message of the application, as BSON binary data of the generic subtype 0</td>
+          </tr>
+        </tbody>
+      </table>
+<pre><code>{
+  "jsonrpc": "2.0",
+  "method": "message",
+  "params": { "data": &lt;binary 68 65 6c 6c 6f&gt; }
+}</code></pre>
+
+      <h3 id="core-closing">1.6 Closing the connection</h3>
+      <p>
+        Either endpoint can close the connection at any time, normally with the close code 1000. An endpoint that closes
+        the connection because of the other endpoint uses one of these close codes:
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Reason</th>
+            <th>When</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>4000</td>
+            <td>protocol violation</td>
+            <td>
+              a text message, a WebSocket message that is not one BSON document, a document that is not one of the
+              notifications of this section with its parameters, a first notification that is not a <code>hello</code>
+              of ksock, a second <code>hello</code>
+            </td>
+          </tr>
+          <tr>
+            <td>4001</td>
+            <td>unsupported version</td>
+            <td>the <code>hello</code> names a version the endpoint does not implement</td>
+          </tr>
+          <tr>
+            <td>4002</td>
+            <td>heartbeat timeout</td>
+            <td>no notification arrived within the <code>heartbeatTimeout</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        The codes are from the range 4000 to 4999, which WebSocket leaves for private use. Browsers only close a
+        WebSocket with 1000 or a code from 3000 to 4999, so the codes WebSocket defines for these cases, 1002 for a
+        protocol error and 1003 for data that cannot be accepted, are not available to the browser.
+      </p>
+      <p>
+        After a heartbeat timeout, the other endpoint will most likely not answer the close. An endpoint considers the
+        connection closed right away, without waiting for the closing handshake to finish.
+      </p>
     </section>
 
     <section id="libraries">
