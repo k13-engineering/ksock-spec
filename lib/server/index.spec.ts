@@ -84,11 +84,14 @@ describe("server", () => {
     await server?.close();
   });
 
-  it("should serve the overview, which links the hello page", async () => {
+  it("should serve the spec with its sections", async () => {
     const response = await fetch(urlOf({ path: "/" }));
+    const html = await response.text();
 
     assert.strictEqual(response.status, 200);
-    assert.match(await response.text(), /href="\/hello\/"/);
+    ["core", "libraries", "approaches"].forEach((section) => {
+      assert.match(html, new RegExp(`<section id="${section}">`));
+    });
   });
 
   it("should serve the hello page with its entry point", async () => {
