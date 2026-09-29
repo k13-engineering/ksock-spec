@@ -1,7 +1,7 @@
 {
   "name": "@k13engineering/ksock-spec",
   "type": "module",
-  "description": "ksock specification",
+  "description": "A specification for how a browser communicates with a server over WebSockets, with a live demo",
   "publishConfig": {
     "access": "public"
   },
@@ -13,7 +13,11 @@
     "type": "git",
     "url": "git+https://github.com/k13-engineering/ksock-spec.git"
   },
-  "keywords": [],
+  "keywords": [
+    "websocket",
+    "browser",
+    "specification"
+  ],
   "author": "Simon Kadisch",
   "license": "LGPL 2.1",
   "bugs": {
