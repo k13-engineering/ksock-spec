@@ -598,11 +598,125 @@
           only with valid parameters, and learns of any other notification as unknown or invalid, which the core treats
           as a protocol violation (<a href="#core-closing">1.6</a>).
         </li>
-        <li>
-          <code>createRpcRequestsDefinition()</code> does the same for requests, and <code>createCombined()</code> joins
-          the definitions of both ends of a connection.
-        </li>
+        <li><code>createRpcRequestsDefinition()</code> does the same for requests.</li>
       </ul>
+
+      <h4 id="libraries-combined">A type-safe definition with createCombined</h4>
+      <p>
+        It is recommended to define a protocol once, with <code>createCombined()</code>, from the requests and
+        notifications that each of its two sides handles. Each endpoint takes its side of the definition and gets from
+        it the handlers of what it receives and the methods for what it sends. TypeScript checks the parameters of both,
+        and the parsers check what actually arrives.
+      </p>
+      <p>For the core, the two sides are the same, as ksock is symmetric:</p>
+<pre><code>import { Binary } from "bson";
+import {
+  createCombined,
+  createRpcNotificationsDefinition,
+  createRpcRequestsDefinition,
+  type TObjectParser
+} from "@k13engineering/yajrpc";
+
+type THello = { protocol: "ksock", version: number, heartbeatTimeout: number };
+type TGrant = { messages: number, bytes: number };
+type TMessage = { data: Binary };
+
+const isRecord = (raw: unknown): raw is Record&lt;string, unknown&gt; =&gt; {
+  return typeof raw === "object" &amp;&amp; raw !== null &amp;&amp; !Array.isArray(raw);
+};
+
+// bson reads int32, int64 and double as numbers
+const isCount = (value: unknown): value is number =&gt; {
+  return Number.isSafeInteger(value) &amp;&amp; (value as number) &gt;= 0;
+};
+
+const isHello = (raw: unknown): raw is THello =&gt; {
+  return isRecord(raw) &amp;&amp; raw.protocol === "ksock" &amp;&amp; isCount(raw.version) &amp;&amp;
+    isCount(raw.heartbeatTimeout) &amp;&amp; raw.heartbeatTimeout &gt; 0;
+};
+
+const isGrant = (raw: unknown): raw is TGrant =&gt; {
+  return isRecord(raw) &amp;&amp; isCount(raw.messages) &amp;&amp; isCount(raw.bytes);
+};
+
+const isMessage = (raw: unknown): raw is TMessage =&gt; {
+  return isRecord(raw) &amp;&amp; raw.data instanceof Binary &amp;&amp;
+    raw.data.sub_type === Binary.SUBTYPE_DEFAULT;
+};
+
+// takes the parameters as they are, if they are valid
+const createParser = &lt;T&gt;(
+  isValid: (raw: unknown) =&gt; raw is T
+): TObjectParser&lt;T&gt; =&gt; {
+  return {
+    parse: ({ raw }) =&gt; {
+      return isValid(raw)
+        ? { error: undefined, value: raw }
+        : { error: Error("invalid parameters"), value: undefined };
+    },
+    format: ({ value }) =&gt; {
+      return value;
+    }
+  };
+};
+
+// for a notification without parameters, whose params are left out
+const noParamsParser: TObjectParser&lt;void&gt; = {
+  parse: ({ raw }) =&gt; {
+    return raw === undefined
+      ? { error: undefined, value: undefined }
+      : { error: Error("unexpected parameters"), value: undefined };
+  },
+  format: () =&gt; {
+    return undefined;
+  }
+};
+
+// ksock is symmetric: both endpoints handle the same notifications,
+// and neither has requests
+const ksockEndpoint = {
+  requests: createRpcRequestsDefinition({}),
+  notifications: createRpcNotificationsDefinition({
+    hello: { paramsParser: createParser(isHello) },
+    grant: { paramsParser: createParser(isGrant) },
+    heartbeat: { paramsParser: noParamsParser },
+    message: { paramsParser: createParser(isMessage) }
+  })
+};
+
+const ksockProtocol = createCombined({
+  sideADefinitions: ksockEndpoint,
+  sideBDefinitions: ksockEndpoint
+});</code></pre>
+      <p>
+        <code>noParamsParser</code> formats the parameters of a <code>heartbeat</code> as <code>undefined</code>, a
+        member <code>bson</code> leaves out, so a <code>heartbeat</code> goes out without <code>params</code> as the core
+        requires (<a href="#core-heartbeats">1.4</a>).
+      </p>
+      <p>An endpoint, e.g. the server on side A and the browser on side B, then handles and sends typed notifications:</p>
+<pre><code>const server = ksockProtocol.sideA({
+  incomingNotifications: {
+    notifications: {
+      hello: ({ version, heartbeatTimeout }) =&gt; { … },
+      grant: ({ messages, bytes }) =&gt; { … },
+      heartbeat: () =&gt; { … },
+      message: ({ data }) =&gt; { … }
+    },
+    // protocol violations (1.6)
+    handleUnknownNotification: () =&gt; { … },
+    handleParametersParseError: () =&gt; { … }
+  },
+  incomingRequests: { … },
+  // notify and request of createJrpc()
+  outgoingNotify: …,
+  outgoingRequest: …
+});
+
+server.outgoingNotifications.grant({ messages: 64, bytes: 1048576 });</code></pre>
+      <p>
+        The same works for the protocol of an application, whose two sides usually handle different requests and
+        notifications.
+      </p>
     </section>
 
     <section id="approaches">
