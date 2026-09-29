@@ -195,7 +195,13 @@
           <li>1.6 <a href="#core-closing">Closing the connection</a></li>
         </ol>
       </li>
-      <li>2. <a href="#libraries">Recommended libraries</a></li>
+      <li>
+        2. <a href="#libraries">Recommended libraries</a>
+        <ol>
+          <li>2.1 <a href="#libraries-bson">bson</a></li>
+          <li>2.2 <a href="#libraries-yajrpc">@k13engineering/yajrpc</a></li>
+        </ol>
+      </li>
       <li>3. <a href="#approaches">Recommended application-level approaches</a></li>
       <li>4. <a href="#live-demo">Live demo</a></li>
     </ol>
@@ -531,8 +537,72 @@
 
     <section id="libraries">
       <h2>2. Recommended libraries</h2>
-      <p class="scope">Which libraries to use.</p>
-      <p class="stub">To be written</p>
+      <p>
+        The core does not prescribe an implementation. For its layers, these libraries are recommended. Both run in
+        browsers and in Node.js, so the browser and the server can share the code of their endpoints.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Layer</th>
+            <th>Library</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>BSON documents</td>
+            <td><a href="#libraries-bson"><code>bson</code></a></td>
+          </tr>
+          <tr>
+            <td>JSON-RPC 2.0 notifications</td>
+            <td><a href="#libraries-yajrpc"><code>@k13engineering/yajrpc</code></a></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="libraries-bson">2.1 bson</h3>
+      <p>
+        <a href="https://www.npmjs.com/package/bson"><code>bson</code></a> is the default BSON package on npm,
+        maintained by MongoDB. It turns a notification into the bytes of a WebSocket message and back:
+      </p>
+      <ul>
+        <li>
+          <code>serialize()</code> encodes a notification as a BSON document, the bytes to send as a binary WebSocket
+          message.
+        </li>
+        <li><code>deserialize()</code> decodes the bytes of a received WebSocket message into its notification.</li>
+        <li>
+          <code>Binary</code> holds the <code>data</code> of a <code>message</code> notification. Its default subtype is
+          the generic subtype 0 the core requires.
+        </li>
+        <li>
+          <code>calculateObjectSize()</code> gives the size of the BSON document of a notification before it is encoded,
+          which is what a <code>message</code> notification takes from the credit (<a href="#core-grants">1.3</a>).
+        </li>
+      </ul>
+
+      <h3 id="libraries-yajrpc">2.2 @k13engineering/yajrpc</h3>
+      <p>
+        <a href="https://www.npmjs.com/package/@k13engineering/yajrpc"><code>@k13engineering/yajrpc</code></a>
+        implements JSON-RPC 2.0 for both ends of a connection: requests, notifications and responses.
+      </p>
+      <ul>
+        <li>
+          Its core, <code>createJrpc()</code>, does not depend on a transport. It hands out the messages to send and
+          takes in the ones received, so it combines with <code>bson</code> and with the grants and heartbeats of
+          ksock.
+        </li>
+        <li>
+          <code>createRpcNotificationsDefinition()</code> defines notifications with a parser for their parameters. An
+          endpoint then handles <code>hello</code>, <code>grant</code>, <code>heartbeat</code> and <code>message</code>
+          only with valid parameters, and learns of any other notification as unknown or invalid, which the core treats
+          as a protocol violation (<a href="#core-closing">1.6</a>).
+        </li>
+        <li>
+          <code>createRpcRequestsDefinition()</code> does the same for requests, and <code>createCombined()</code> joins
+          the definitions of both ends of a connection.
+        </li>
+      </ul>
     </section>
 
     <section id="approaches">
