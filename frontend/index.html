@@ -202,7 +202,16 @@
           <li>2.2 <a href="#libraries-yajrpc">@k13engineering/yajrpc</a></li>
         </ol>
       </li>
-      <li>3. <a href="#approaches">Recommended application-level approaches</a></li>
+      <li>
+        3. <a href="#approaches">Recommended application-level approaches</a>
+        <ol>
+          <li>3.1 <a href="#approaches-messages">BSON and JSON-RPC again</a></li>
+          <li>3.2 <a href="#approaches-model">The backend model as JSON patches</a></li>
+          <li>3.3 <a href="#approaches-requests">Requests that change the backend model</a></li>
+          <li>3.4 <a href="#approaches-out-of-band">Requests outside the backend model</a></li>
+          <li>3.5 <a href="#approaches-streams">Streams</a></li>
+        </ol>
+      </li>
       <li>4. <a href="#live-demo">Live demo</a></li>
     </ol>
   </nav>
@@ -741,8 +750,113 @@ server.outgoingNotifications.grant({ messages: 64, bytes: 1048576 });</code></pr
 
     <section id="approaches">
       <h2>3. Recommended application-level approaches</h2>
-      <p class="scope">Recommendations for common approaches at the application level.</p>
-      <p class="stub">To be written</p>
+      <p>
+        The core carries the messages of the application as binary data (<a href="#core-message">1.5</a>) and leaves
+        what is in them to the application. These approaches are recommended for it.
+      </p>
+
+      <h3 id="approaches-messages">3.1 BSON and JSON-RPC again</h3>
+      <p>
+        The <code>data</code> of a <code>message</code> notification is recommended to be what the notifications of the
+        core are: a BSON document holding a JSON-RPC 2.0 message, which for the application can be a request, a
+        response or a notification. The same libraries serve both layers (<a href="#libraries">section 2</a>), and the
+        protocol of the application is defined with <code>createCombined()</code> like the core
+        (<a href="#libraries-combined">2.2</a>). Its two sides usually differ: the client asks for changes and
+        requests, and the server sends the state of its model.
+      </p>
+
+      <h3 id="approaches-model">3.2 The backend model as JSON patches</h3>
+      <p>
+        Most applications show the state of their backend, the backend model, and let the user change it. The server
+        is recommended to send the backend model to the client in a notification that carries a
+        <a href="https://www.rfc-editor.org/rfc/rfc6902">JSON Patch</a>: the operations that turn the model the client
+        has into the current one.
+      </p>
+      <ul>
+        <li>
+          The server keeps for each client the model it sent last, starting with an empty object, and sends the
+          difference to the current model. The first patch therefore brings all of the model, and each patch after it
+          what changed since.
+        </li>
+        <li>
+          Changes that come faster than the client takes them merge into one patch. While the <code>grant</code> of the
+          client is used up, the server sends nothing, and afterwards sends the difference to the model as it is then,
+          instead of every state in between.
+        </li>
+        <li>
+          The patches need no sequence number and no acknowledgement: the WebSocket delivers them in order, and the
+          grants of the core control their flow.
+        </li>
+        <li>
+          The client applies each patch to its copy of the model and changes the copy in no other way. What the user
+          changes goes to the backend as a request (<a href="#approaches-requests">3.3</a>) and comes back in a patch.
+        </li>
+      </ul>
+<pre><code>{
+  "jsonrpc": "2.0",
+  "method": "modelPatch",
+  "params": {
+    "patch": [
+      { "op": "replace", "path": "/lamp/on", "value": true },
+      { "op": "replace", "path": "/requestSequence", "value": 7 }
+    ]
+  }
+}</code></pre>
+
+      <h3 id="approaches-requests">3.3 Requests that change the backend model</h3>
+      <p>
+        This is the main case of most applications: a button triggers an action that changes the backend model, and
+        the button spins until the backend has processed the request and the model shows its result. The client learns
+        of that from the model itself, through a request sequence that the backend mirrors in it.
+      </p>
+      <ul>
+        <li>
+          The backend mirrors in the model it sends to a client the sequence of the last request of that client it has
+          processed, <code>requestSequence</code>, which starts at 0.
+        </li>
+        <li>
+          The client sends its request as a notification with the sequence <code>requestSequence + 1</code>, taken from
+          the model it has.
+        </li>
+        <li>
+          The backend mirrors the sequence in the same change of the model as the result of the request, so both come
+          in the same patch. Once the model of the client shows a <code>requestSequence</code> greater than or equal to
+          the one it sent, the request is done and its result is in the model.
+        </li>
+        <li>
+          The backend mirrors the sequence of every request it processed, also of one it refused, as the button would
+          spin forever otherwise. What came of a request shows in the model.
+        </li>
+        <li>
+          A client has one such request pending at a time: the button spins until it is done, and the sequence of the
+          next request is taken from the model after that.
+        </li>
+        <li>
+          The backend processes a request only if its sequence is greater than the one it mirrors, so a request that
+          is sent again, e.g. by a client that is not sure it arrived, is processed once.
+        </li>
+      </ul>
+<pre><code>{
+  "jsonrpc": "2.0",
+  "method": "switchLamp",
+  "params": { "requestSequence": 7, "on": true }
+}</code></pre>
+      <p>
+        The client sent this with a <code>requestSequence</code> of 6 in its model. The patch of
+        <a href="#approaches-model">3.2</a> answers it: the lamp is on, and the request with the sequence 7 is done.
+      </p>
+
+      <h3 id="approaches-out-of-band">3.4 Requests outside the backend model</h3>
+      <p>
+        Requests that do not operate on the backend model, e.g. fetching a file, can and should be JSON-RPC requests.
+        They are out of band: their result goes to the client that asked, in the response, and not into the model.
+      </p>
+
+      <h3 id="approaches-streams">3.5 Streams</h3>
+      <p>
+        Streams are done with notifications in both directions. Their details are out of the scope of these
+        recommendations.
+      </p>
     </section>
 
     <section id="live-demo">
