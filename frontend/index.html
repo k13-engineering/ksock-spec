@@ -861,9 +861,24 @@ server.outgoingNotifications.grant({ messages: 64, bytes: 1048576 });</code></pr
 
     <section id="live-demo">
       <h2>4. Live demo</h2>
-      <p class="scope">
-        This page is connected to its server over a WebSocket at <code>/api/demo</code>, which sends every message back
-        as it came.
+      <p>
+        This page talks ksock to its server, over a WebSocket at <code>/api/lamp</code>, and follows the recommendations
+        of <a href="#approaches">section 3</a> on it. The server keeps a lamp that every page connected to it switches,
+        and sends each page the backend model as JSON patches (<a href="#approaches-model">3.2</a>).
+      </p>
+      <ul>
+        <li>
+          Switching the lamp is a request that changes the backend model (<a href="#approaches-requests">3.3</a>): its
+          button spins until the backend model mirrors the sequence of the request.
+        </li>
+        <li>
+          Rolling the die is a request out of band (<a href="#approaches-out-of-band">3.4</a>): only this page gets its
+          result, in the response.
+        </li>
+      </ul>
+      <p>
+        The backend takes 1.5 seconds for each request, so the spinners can be seen. Open this page twice to see the
+        lamp switch in both.
       </p>
       <div id="demo"></div>
     </section>

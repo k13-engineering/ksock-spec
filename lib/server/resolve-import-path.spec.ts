@@ -17,6 +17,15 @@ describe("resolve import path", () => {
     });
   });
 
+  it("should resolve bson to its build for browsers", async () => {
+    const result = await resolveImportPath({ importer, specifier: "bson" });
+
+    assert.deepStrictEqual(result, {
+      error: undefined,
+      filePath: nodePath.join(packageFolder, "node_modules/bson/lib/bson.mjs")
+    });
+  });
+
   it("should resolve other imports like node does", async () => {
     const result = await resolveImportPath({ importer, specifier: "./index.ts" });
 

@@ -3,7 +3,11 @@ import nodeHttp from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
 import { wurzelExpressRouter } from "wurzel";
-import { serveDemoSocket } from "./demo-socket.ts";
+import { systemTimers } from "../ksock/timers.ts";
+import { createLampBackend } from "../lamp/backend.ts";
+import { createLampServerApplication } from "../lamp/server.ts";
+import { lampKsockSettings } from "../lamp/settings.ts";
+import { serveKsockSocket } from "./ksock-socket.ts";
 import { resolveImportPath } from "./resolve-import-path.ts";
 
 type TServeWebSocket = (args: { webSocket: WebSocket }) => void;
@@ -71,8 +75,18 @@ const routeWebSockets = ({
   };
 };
 
-const startServer = async ({ frontendFolder, port }: { frontendFolder: string, port: number }) => {
+const startServer = async ({
+  frontendFolder,
+  port,
+  lampDelayMs
+}: {
+  frontendFolder: string,
+  port: number,
+  // how long the backend of the lamp demo takes for a request, so the spinners can be seen
+  lampDelayMs: number
+}) => {
   const httpServer = nodeHttp.createServer(createApp({ frontendFolder }));
+  const lampBackend = createLampBackend({ delayMs: lampDelayMs, timers: systemTimers, random: Math.random });
 
   try {
     await listen({ httpServer, port });
@@ -83,11 +97,19 @@ const startServer = async ({ frontendFolder, port }: { frontendFolder: string, p
   const webSockets = routeWebSockets({
     httpServer,
     serveByPath: new Map([
-      ["/api/demo", serveDemoSocket]
+      ["/api/lamp", ({ webSocket }) => {
+        serveKsockSocket({
+          webSocket,
+          settings: lampKsockSettings,
+          timers: systemTimers,
+          application: createLampServerApplication({ backend: lampBackend })
+        });
+      }]
     ])
   });
 
   const close = async () => {
+    lampBackend.stop();
     webSockets.close();
 
     await new Promise<void>((resolve) => {

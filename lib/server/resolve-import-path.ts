@@ -9,6 +9,8 @@ import { defaultResolveImportPath, type TResolveImportPathFunc } from "wurzel";
  */
 const browserBuildsBySpecifier = new Map([
   ["immer", nodePath.join(nodePath.dirname(fileURLToPath(import.meta.resolve("immer"))), "immer.production.mjs")],
+  // node resolves bson to its build for node, the browser needs the one for browsers
+  ["bson", nodePath.join(nodePath.dirname(fileURLToPath(import.meta.resolve("bson"))), "bson.mjs")],
 ]);
 
 const resolveImportPath: TResolveImportPathFunc = async ({ importer, specifier }) => {

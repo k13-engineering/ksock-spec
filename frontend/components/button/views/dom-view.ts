@@ -6,12 +6,21 @@
 import type { TButtonViewModel } from "../view-model.ts";
 
 /*
- * A native button with a fixed label. It has no type, so in a form it is the button that submits it, and the browser
- * clicks it for Enter in a field of the form.
+ * A native button with the label of its view model, and a spinner while it is busy. Its look, the spinner turning
+ * included, is up to the page, by the classes button, button-spinner and button-label and aria-busy.
  */
-const createButtonDomView = ({ container, label }: { container: HTMLElement, label: string }) => {
+const createButtonDomView = ({ container }: { container: HTMLElement }) => {
+  const spinner = document.createElement("span");
+  spinner.className = "button-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+
+  const label = document.createElement("span");
+  label.className = "button-label";
+
   const button = document.createElement("button");
-  button.textContent = label;
+  button.type = "button";
+  button.className = "button";
+  button.append(spinner, label);
   container.append(button);
 
   let shown: TButtonViewModel | undefined = undefined;
@@ -25,7 +34,9 @@ const createButtonDomView = ({ container, label }: { container: HTMLElement, lab
   return {
     update: ({ viewModel }: { viewModel: TButtonViewModel }) => {
       shown = viewModel;
+      label.textContent = viewModel.label;
       button.disabled = !viewModel.enabled;
+      button.setAttribute("aria-busy", `${viewModel.busy}`);
     },
 
     destroy: () => {

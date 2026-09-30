@@ -5,7 +5,7 @@
     "start": "node bin/server.ts",
     "build": "rm -rf dist/ && deno-node-build --root . --out dist/ --entry lib/index.ts",
     "type-check": "tsc --noEmit",
-    "test": "c8 --reporter lcov --reporter html --reporter text --all --src lib/ --exclude 'lib/**/*.spec.ts' mocha 'lib/**/*.spec.ts'",
+    "test": "c8 --reporter lcov --reporter html --reporter text --all --src lib/ --exclude 'lib/**/*.spec.ts' --exclude 'frontend/**' mocha 'lib/**/*.spec.ts'",
     "lint": "eslint .",
     "update-deps": "npm-check-updates -u"
   },
@@ -24,7 +24,10 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@k13engineering/yajrpc": "^0.0.7",
+    "bson": "^7.3.3",
     "express": "^5.2.1",
+    "fast-json-patch": "^3.1.1",
     "immer": "^11.1.18",
     "proxy-memoize": "^3.0.1",
     "ws": "^8.22.0",

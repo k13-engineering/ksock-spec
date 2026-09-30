@@ -6,7 +6,12 @@ import assert from "node:assert";
 import nodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, it } from "mocha";
+import { openKsockSocket } from "../../frontend/browser/ksock-socket.ts";
 import { startServer } from "../index.ts";
+import { createLampClientApplication } from "../lamp/client.ts";
+import { createLampLogic } from "../lamp/logic.ts";
+import { EConnection, type TLampModel } from "../lamp/model.ts";
+import { lampKsockSettings } from "../lamp/settings.ts";
 
 const frontendFolder = nodePath.resolve(nodePath.dirname(fileURLToPath(import.meta.url)), "../../frontend");
 
@@ -31,9 +36,12 @@ const fetchModule = async ({ url }: { url: string }): Promise<TServedModule> => 
   };
 };
 
-// the urls of the modules a served module imports, static imports only
+// the urls of the modules a served module imports, static imports only, not the ones in comments, e.g. the type imports
+// the build of yajrpc keeps as comments
 const importedUrlsOf = ({ module }: { module: TServedModule }) => {
-  return [...module.code.matchAll(/\b(?:from|import)\s*"([^"]+)"/g)].map((match) => {
+  const code = module.code.replaceAll(/\/\*[\s\S]*?\*\//g, "");
+
+  return [...code.matchAll(/\b(?:from|import)\s*"([^"]+)"/g)].map((match) => {
     return new URL(match[1], module.url).href;
   });
 };
@@ -88,13 +96,79 @@ const connect = ({ url }: { url: string }) => {
   });
 };
 
-// the data of the next message the websocket receives
-const nextMessageOf = ({ webSocket }: { webSocket: WebSocket }) => {
-  return new Promise<unknown>((resolve) => {
-    webSocket.addEventListener("message", (event) => {
-      resolve(event.data);
-    }, { once: true });
+// the code the websocket closes with
+const closeCodeOf = ({ webSocket }: { webSocket: WebSocket }) => {
+  return new Promise<number>((resolve) => {
+    webSocket.addEventListener("close", (event) => {
+      resolve(event.code);
+    });
   });
+};
+
+// a page of the lamp demo without its view: its logic, connected to the server as the browser connects it
+const openLampPage = ({ url }: { url: string }) => {
+  let models: TLampModel[] = [];
+  let listeners: (() => void)[] = [];
+
+  const logic = createLampLogic({
+    backend: openKsockSocket({
+      url,
+      settings: lampKsockSettings,
+      application: createLampClientApplication({
+        onReady: () => {
+          logic.connected();
+        },
+        onModelPatch: ({ patch }) => {
+          logic.modelPatchFromBackend({ patch });
+        },
+        onClosed: () => {
+          logic.connectionLost();
+        }
+      })
+    }).application.backend,
+
+    onUpdate: () => {
+      models = [...models, logic.model()];
+      listeners.forEach((listener) => {
+        listener();
+      });
+    }
+  });
+
+  const waitFor = ({ condition }: { condition: (model: TLampModel) => boolean }) => {
+    return new Promise<TLampModel>((resolve) => {
+      const check = () => {
+        if (condition(logic.model())) {
+          listeners = listeners.filter((listener) => {
+            return listener !== check;
+          });
+          resolve(logic.model());
+        }
+      };
+
+      listeners = [...listeners, check];
+      check();
+    });
+  };
+
+  return {
+    logic,
+    waitFor,
+
+    // every model the logic had
+    models: () => {
+      return models;
+    },
+
+    // connected, with the backend model
+    ready: () => {
+      return waitFor({
+        condition: ({ backend }) => {
+          return backend.connection === EConnection.OPEN && backend.model !== undefined;
+        }
+      });
+    }
+  };
 };
 
 describe("server", () => {
@@ -109,7 +183,7 @@ describe("server", () => {
   };
 
   beforeEach(async () => {
-    server = await startServer({ frontendFolder, port: 0 });
+    server = await startServer({ frontendFolder, port: 0, lampDelayMs: 20 });
   });
 
   afterEach(async () => {
@@ -139,7 +213,15 @@ describe("server", () => {
       return decodeURIComponent(new URL(module.url).pathname);
     });
 
-    ["/lib/demo/view-model.ts", "/lib/model-store.ts", "/immer/dist/immer.production.mjs", "/proxy-memoize/"].forEach((part) => {
+    [
+      "/lib/lamp/view-model.ts",
+      "/lib/ksock/endpoint.ts",
+      "/lib/model-store.ts",
+      "/immer/dist/immer.production.mjs",
+      "/proxy-memoize/",
+      "/bson/lib/bson.mjs",
+      "/@k13engineering/yajrpc/"
+    ].forEach((part) => {
       assert.ok(paths.some((path) => {
         return path.includes(part);
       }), `${part} is not among ${paths.join(", ")}`);
@@ -149,54 +231,121 @@ describe("server", () => {
   it("should serve the typescript of the frontend without its types", async () => {
     const entry = await fetchModule({ url: urlOf({ path: "/index.ts" }) });
 
-    assert.match(entry.code, /createDemoApp/);
+    assert.match(entry.code, /createLampApp/);
     assert.doesNotMatch(entry.code, /as HTMLElement/);
   });
 
-  it("should send every text message of the demo socket back as text", async () => {
-    const webSocket = await connect({ url: socketUrlOf({ path: "/api/demo" }) });
-    const echo = nextMessageOf({ webSocket });
+  describe("lamp demo", () => {
+    const lampUrl = () => {
+      return socketUrlOf({ path: "/api/lamp" });
+    };
 
-    webSocket.send("hello");
+    it("should send a page the backend model once it said hello", async () => {
+      const page = openLampPage({ url: lampUrl() });
 
-    assert.strictEqual(await echo, "hello");
-    webSocket.close();
-  });
+      const { backend } = await page.ready();
 
-  it("should send every binary message of the demo socket back as binary", async () => {
-    const webSocket = await connect({ url: socketUrlOf({ path: "/api/demo" }) });
-    const echo = nextMessageOf({ webSocket });
+      assert.deepStrictEqual(backend.model, { lamp: { on: false }, requestSequence: 0 });
+    });
 
-    webSocket.send(new Uint8Array([1, 2, 3]));
+    it("should switch the lamp for a request, and mirror its sequence in the patch with the result", async () => {
+      const page = openLampPage({ url: lampUrl() });
+      await page.ready();
 
-    const data = await echo;
-    assert.ok(data instanceof Blob);
-    assert.deepStrictEqual(new Uint8Array(await data.arrayBuffer()), new Uint8Array([1, 2, 3]));
-    webSocket.close();
+      page.logic.requestSwitch();
+
+      assert.strictEqual(page.logic.model().ui.switchRequestSequence, 1);
+
+      const { backend } = await page.waitFor({
+        condition: (model) => {
+          return (model.backend.model?.requestSequence ?? 0) >= 1;
+        }
+      });
+
+      assert.deepStrictEqual(backend.model, { lamp: { on: true }, requestSequence: 1 });
+      assert.ok(!page.models().some((model) => {
+        return model.backend.model?.lamp.on === true && model.backend.model.requestSequence === 0;
+      }), "the lamp was on before the request was mirrored");
+    });
+
+    it("should show the lamp another page switched, with the sequence of this page", async () => {
+      const page = openLampPage({ url: lampUrl() });
+      const other = openLampPage({ url: lampUrl() });
+      await page.ready();
+      await other.ready();
+
+      other.logic.requestSwitch();
+
+      const { backend } = await page.waitFor({
+        condition: (model) => {
+          return model.backend.model?.lamp.on === true;
+        }
+      });
+
+      assert.strictEqual(backend.model?.requestSequence, 0);
+    });
+
+    it("should roll a die out of band, for the page that asked only", async () => {
+      const page = openLampPage({ url: lampUrl() });
+      const other = openLampPage({ url: lampUrl() });
+      await page.ready();
+      await other.ready();
+
+      await page.logic.requestRoll();
+
+      const { dieValue } = page.logic.model().ui;
+      assert.ok(dieValue !== undefined && dieValue >= 1 && dieValue <= 6);
+      assert.strictEqual(other.logic.model().ui.dieValue, undefined);
+    });
+
+    it("should tell a page when the connection is lost", async () => {
+      const page = openLampPage({ url: lampUrl() });
+      await page.ready();
+
+      // closed here, so not again after the test
+      const closing = server;
+      server = undefined;
+      await closing?.close();
+
+      await page.waitFor({
+        condition: ({ backend }) => {
+          return backend.connection === EConnection.CLOSED;
+        }
+      });
+    });
+
+    it("should close with 4000 a connection that sends text", async () => {
+      const webSocket = await connect({ url: lampUrl() });
+      const closeCode = closeCodeOf({ webSocket });
+
+      webSocket.send("hello");
+
+      assert.strictEqual(await closeCode, 4000);
+    });
+
+    it("should say nothing to a connection until it says hello", async () => {
+      const webSocket = await connect({ url: lampUrl() });
+      let received = 0;
+
+      webSocket.addEventListener("message", () => {
+        received += 1;
+      });
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+
+      assert.strictEqual(received, 0);
+      webSocket.close();
+    });
   });
 
   it("should refuse a websocket at any other path", async () => {
     await assert.rejects(connect({ url: socketUrlOf({ path: "/api/unknown" }) }));
   });
 
-  it("should close the websockets when it closes", async () => {
-    const webSocket = await connect({ url: socketUrlOf({ path: "/api/demo" }) });
-    const closed = new Promise<void>((resolve) => {
-      webSocket.addEventListener("close", () => {
-        resolve();
-      });
-    });
-
-    // closed here, so not again after the test
-    const closing = server;
-    server = undefined;
-    await closing?.close();
-
-    await closed;
-  });
-
   it("should fail to start on a port in use", async () => {
-    await assert.rejects(startServer({ frontendFolder, port: server?.port as number }), {
+    await assert.rejects(startServer({ frontendFolder, port: server?.port as number, lampDelayMs: 20 }), {
       message: `failed to listen on port ${server?.port}`
     });
   });
